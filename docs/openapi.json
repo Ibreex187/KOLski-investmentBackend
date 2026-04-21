@@ -1,0 +1,482 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Investment App API",
+    "version": "1.0.0",
+    "description": "Backend API documentation for authentication, portfolio analytics, reporting, and admin/security endpoints."
+  },
+  "servers": [
+    {
+      "url": "http://localhost:4040",
+      "description": "Local development server"
+    }
+  ],
+  "paths": {
+    "/health": {
+      "get": {
+        "summary": "Health check",
+        "responses": {
+          "200": {
+            "description": "Service is healthy"
+          }
+        }
+      }
+    },
+    "/api/v1/login": {
+      "post": {
+        "summary": "Authenticate a user",
+        "responses": {
+          "200": { "description": "Login successful" },
+          "403": { "description": "Email not verified" }
+        }
+      }
+    },
+    "/api/v1/portfolio/dashboard": {
+      "get": {
+        "summary": "Get frontend-ready dashboard payload",
+        "security": [{ "bearerAuth": [] }],
+        "responses": {
+          "200": { "description": "Dashboard analytics payload" }
+        }
+      }
+    },
+    "/api/v1/portfolio/transactions": {
+      "get": {
+        "summary": "List and filter transactions",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [
+          { "name": "type", "in": "query", "schema": { "type": "string" } },
+          { "name": "symbol", "in": "query", "schema": { "type": "string" } },
+          { "name": "startDate", "in": "query", "schema": { "type": "string", "format": "date" } },
+          { "name": "endDate", "in": "query", "schema": { "type": "string", "format": "date" } },
+          { "name": "page", "in": "query", "schema": { "type": "integer" } },
+          { "name": "limit", "in": "query", "schema": { "type": "integer" } }
+        ],
+        "responses": {
+          "200": { "description": "Filtered transaction report" }
+        }
+      }
+    },
+    "/api/v1/portfolio/transactions/export": {
+      "get": {
+        "summary": "Export transactions as CSV",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [
+          { "name": "format", "in": "query", "schema": { "type": "string", "enum": ["csv"] } }
+        ],
+        "responses": {
+          "200": { "description": "CSV export stream" }
+        }
+      }
+    },
+    "/api/v1/admin/overview": {
+      "get": {
+        "summary": "Get admin overview metrics",
+        "security": [{ "bearerAuth": [] }],
+        "responses": {
+          "200": { "description": "Admin metrics" },
+          "403": { "description": "Forbidden" }
+        }
+      }
+    },
+    "/api/v1/admin/security-status": {
+      "get": {
+        "summary": "Get security hardening status",
+        "security": [{ "bearerAuth": [] }],
+        "responses": {
+          "200": { "description": "Security status summary" },
+          "403": { "description": "Forbidden" }
+        }
+      }
+    },
+    "/api/v1/deposits/manual": {
+      "post": {
+        "summary": "Create a manual bank-transfer deposit request",
+        "security": [{ "bearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["amount", "transfer_reference", "idempotency_key"],
+                "properties": {
+                  "amount": { "type": "number", "minimum": 0.01 },
+                  "currency": { "type": "string", "enum": ["USD"], "default": "USD" },
+                  "transfer_reference": { "type": "string", "minLength": 4, "maxLength": 128 },
+                  "idempotency_key": { "type": "string", "minLength": 6, "maxLength": 128 },
+                  "note": { "type": "string", "maxLength": 500 }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": { "description": "Deposit request created as pending" },
+          "400": { "description": "Validation error" },
+          "403": { "description": "Manual deposits are disabled by rollout policy" }
+        }
+      }
+    },
+    "/api/v1/deposits": {
+      "get": {
+        "summary": "List current user's manual deposit requests",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [
+          { "name": "status", "in": "query", "schema": { "type": "string", "enum": ["pending", "completed", "failed"] } },
+          { "name": "startDate", "in": "query", "schema": { "type": "string", "format": "date" }, "description": "Filter results created on or after this date (ISO 8601)" },
+          { "name": "endDate", "in": "query", "schema": { "type": "string", "format": "date" }, "description": "Filter results created on or before this date (ISO 8601, inclusive)" },
+          { "name": "page", "in": "query", "schema": { "type": "integer", "minimum": 1 } },
+          { "name": "limit", "in": "query", "schema": { "type": "integer", "minimum": 1, "maximum": 100 } }
+        ],
+        "responses": {
+          "200": { "description": "Manual deposit list" }
+        }
+      }
+    },
+    "/api/v1/deposits/{id}": {
+      "get": {
+        "summary": "Get one manual deposit request for current user",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": { "description": "Manual deposit detail" },
+          "404": { "description": "Deposit not found" }
+        }
+      }
+    },
+    "/api/v1/withdrawals/manual": {
+      "post": {
+        "summary": "Create a manual withdrawal request",
+        "security": [{ "bearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["amount", "destination_reference", "idempotency_key"],
+                "properties": {
+                  "amount": { "type": "number", "minimum": 0.01 },
+                  "currency": { "type": "string", "enum": ["USD"], "default": "USD" },
+                  "destination_reference": { "type": "string", "minLength": 4, "maxLength": 128 },
+                  "idempotency_key": { "type": "string", "minLength": 6, "maxLength": 128 },
+                  "note": { "type": "string", "maxLength": 500 }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": { "description": "Withdrawal request created as pending" },
+          "400": { "description": "Validation error" },
+          "403": { "description": "Manual withdrawals are disabled by rollout policy" }
+        }
+      }
+    },
+    "/api/v1/withdrawals": {
+      "get": {
+        "summary": "List current user's manual withdrawal requests",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [
+          { "name": "status", "in": "query", "schema": { "type": "string", "enum": ["pending", "completed", "failed"] } },
+          { "name": "startDate", "in": "query", "schema": { "type": "string", "format": "date" }, "description": "Filter results created on or after this date (ISO 8601)" },
+          { "name": "endDate", "in": "query", "schema": { "type": "string", "format": "date" }, "description": "Filter results created on or before this date (ISO 8601, inclusive)" },
+          { "name": "page", "in": "query", "schema": { "type": "integer", "minimum": 1 } },
+          { "name": "limit", "in": "query", "schema": { "type": "integer", "minimum": 1, "maximum": 100 } }
+        ],
+        "responses": {
+          "200": { "description": "Manual withdrawal list" }
+        }
+      }
+    },
+    "/api/v1/withdrawals/{id}": {
+      "get": {
+        "summary": "Get one manual withdrawal request for current user",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": { "description": "Manual withdrawal detail" },
+          "404": { "description": "Withdrawal not found" }
+        }
+      }
+    },
+    "/api/v1/admin/deposits": {
+      "get": {
+        "summary": "List manual deposit requests for admin review",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [
+          { "name": "status", "in": "query", "schema": { "type": "string", "enum": ["pending", "completed", "failed"] } },
+          { "name": "startDate", "in": "query", "schema": { "type": "string", "format": "date" }, "description": "Filter results created on or after this date (ISO 8601)" },
+          { "name": "endDate", "in": "query", "schema": { "type": "string", "format": "date" }, "description": "Filter results created on or before this date (ISO 8601, inclusive)" },
+          { "name": "page", "in": "query", "schema": { "type": "integer", "minimum": 1 } },
+          { "name": "limit", "in": "query", "schema": { "type": "integer", "minimum": 1, "maximum": 100 } }
+        ],
+        "responses": {
+          "200": { "description": "Admin manual deposit queue" },
+          "403": { "description": "Forbidden" }
+        }
+      }
+    },
+    "/api/v1/admin/withdrawals": {
+      "get": {
+        "summary": "List manual withdrawal requests for admin review",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [
+          { "name": "status", "in": "query", "schema": { "type": "string", "enum": ["pending", "completed", "failed"] } },
+          { "name": "startDate", "in": "query", "schema": { "type": "string", "format": "date" }, "description": "Filter results created on or after this date (ISO 8601)" },
+          { "name": "endDate", "in": "query", "schema": { "type": "string", "format": "date" }, "description": "Filter results created on or before this date (ISO 8601, inclusive)" },
+          { "name": "page", "in": "query", "schema": { "type": "integer", "minimum": 1 } },
+          { "name": "limit", "in": "query", "schema": { "type": "integer", "minimum": 1, "maximum": 100 } }
+        ],
+        "responses": {
+          "200": { "description": "Admin manual withdrawal queue" },
+          "403": { "description": "Forbidden" }
+        }
+      }
+    },
+    "/api/v1/admin/deposits/{id}/approve": {
+      "post": {
+        "summary": "Approve manual deposit and credit funds",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "admin_note": { "type": "string", "maxLength": 500 },
+                  "bank_settlement_ref": { "type": "string", "minLength": 2, "maxLength": 128 }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Deposit approved and credited" },
+          "403": { "description": "Forbidden or rollout disabled" },
+          "409": { "description": "Deposit already reviewed" }
+        }
+      }
+    },
+    "/api/v1/admin/deposits/{id}/reject": {
+      "post": {
+        "summary": "Reject manual deposit",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["reason"],
+                "properties": {
+                  "reason": { "type": "string", "minLength": 3, "maxLength": 300 },
+                  "admin_note": { "type": "string", "maxLength": 500 }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Deposit rejected" },
+          "403": { "description": "Forbidden or rollout disabled" },
+          "409": { "description": "Deposit already reviewed" }
+        }
+      }
+    },
+    "/api/v1/admin/withdrawals/{id}/approve": {
+      "post": {
+        "summary": "Approve manual withdrawal and debit funds",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "admin_note": { "type": "string", "maxLength": 500 },
+                  "bank_settlement_ref": { "type": "string", "minLength": 2, "maxLength": 128 }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Withdrawal approved and debited" },
+          "403": { "description": "Forbidden or rollout disabled" },
+          "409": { "description": "Withdrawal already reviewed" }
+        }
+      }
+    },
+    "/api/v1/admin/withdrawals/{id}/reject": {
+      "post": {
+        "summary": "Reject manual withdrawal",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["reason"],
+                "properties": {
+                  "reason": { "type": "string", "minLength": 3, "maxLength": 300 },
+                  "admin_note": { "type": "string", "maxLength": 500 }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Withdrawal rejected" },
+          "403": { "description": "Forbidden or rollout disabled" },
+          "409": { "description": "Withdrawal already reviewed" }
+        }
+      }
+    },
+    "/api/v1/notifications": {
+      "get": {
+        "summary": "List current user's notifications",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [
+          { "name": "startDate", "in": "query", "schema": { "type": "string", "format": "date" }, "description": "Filter notifications created on or after this date (ISO 8601)" },
+          { "name": "endDate", "in": "query", "schema": { "type": "string", "format": "date" }, "description": "Filter notifications created on or before this date (ISO 8601, inclusive)" },
+          { "name": "page", "in": "query", "schema": { "type": "integer", "minimum": 1 } },
+          { "name": "limit", "in": "query", "schema": { "type": "integer", "minimum": 1, "maximum": 100 } }
+        ],
+        "responses": {
+          "200": { "description": "Notification list" }
+        }
+      }
+    },
+    "/api/v1/portfolio/alerts": {
+      "get": {
+        "summary": "List current user's price alerts",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [
+          { "name": "startDate", "in": "query", "schema": { "type": "string", "format": "date" }, "description": "Filter alerts created on or after this date (ISO 8601)" },
+          { "name": "endDate", "in": "query", "schema": { "type": "string", "format": "date" }, "description": "Filter alerts created on or before this date (ISO 8601, inclusive)" },
+          { "name": "page", "in": "query", "schema": { "type": "integer", "minimum": 1 } },
+          { "name": "limit", "in": "query", "schema": { "type": "integer", "minimum": 1, "maximum": 100 } }
+        ],
+        "responses": {
+          "200": { "description": "Price alert list" }
+        }
+      }
+    },
+    "/api/v1/admin/users": {
+      "get": {
+        "summary": "List all users (admin)",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [
+          { "name": "startDate", "in": "query", "schema": { "type": "string", "format": "date" }, "description": "Filter users registered on or after this date (ISO 8601)" },
+          { "name": "endDate", "in": "query", "schema": { "type": "string", "format": "date" }, "description": "Filter users registered on or before this date (ISO 8601, inclusive)" },
+          { "name": "page", "in": "query", "schema": { "type": "integer", "minimum": 1 } },
+          { "name": "limit", "in": "query", "schema": { "type": "integer", "minimum": 1, "maximum": 100 } }
+        ],
+        "responses": {
+          "200": { "description": "User list" },
+          "403": { "description": "Forbidden" }
+        }
+      }
+    },
+    "/api/v1/admin/alerts": {
+      "get": {
+        "summary": "List all price alerts (admin)",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [
+          { "name": "startDate", "in": "query", "schema": { "type": "string", "format": "date" }, "description": "Filter alerts created on or after this date (ISO 8601)" },
+          { "name": "endDate", "in": "query", "schema": { "type": "string", "format": "date" }, "description": "Filter alerts created on or before this date (ISO 8601, inclusive)" },
+          { "name": "page", "in": "query", "schema": { "type": "integer", "minimum": 1 } },
+          { "name": "limit", "in": "query", "schema": { "type": "integer", "minimum": 1, "maximum": 100 } }
+        ],
+        "responses": {
+          "200": { "description": "Alert list" },
+          "403": { "description": "Forbidden" }
+        }
+      }
+    },
+    "/api/v1/admin/transactions": {
+      "get": {
+        "summary": "List all transactions (admin)",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [
+          { "name": "startDate", "in": "query", "schema": { "type": "string", "format": "date" }, "description": "Filter transactions created on or after this date (ISO 8601)" },
+          { "name": "endDate", "in": "query", "schema": { "type": "string", "format": "date" }, "description": "Filter transactions created on or before this date (ISO 8601, inclusive)" },
+          { "name": "page", "in": "query", "schema": { "type": "integer", "minimum": 1 } },
+          { "name": "limit", "in": "query", "schema": { "type": "integer", "minimum": 1, "maximum": 100 } }
+        ],
+        "responses": {
+          "200": { "description": "Transaction list" },
+          "403": { "description": "Forbidden" }
+        }
+      }
+    },
+    "/api/v1/docs/openapi.json": {
+      "get": {
+        "summary": "OpenAPI spec document",
+        "responses": {
+          "200": { "description": "OpenAPI JSON" }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT"
+      }
+    }
+  }
+}
