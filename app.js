@@ -112,6 +112,16 @@ app.get('/api/v1/docs/openapi.json', (req, res) => {
   res.status(200).json(openApiSpec);
 });
 
+app.get('/', (req, res) => {
+  res.status(200).json({
+    success: true,
+    name: 'Investment App API',
+    status: 'online',
+    docs: '/api/v1/docs/openapi.json',
+    health: '/health'
+  });
+});
+
 app.use('/api/v1', authRoutes);
 app.use('/api/v1', depositRoutes);
 app.use('/api/v1', withdrawalRoutes);
