@@ -6,9 +6,8 @@ function parseDate(value) {
 }
 
 function buildManualWithdrawalRolloutStatus(now = new Date(), env = process.env) {
-  const isProduction = env.NODE_ENV === 'production';
   const rawFlag = env.MANUAL_WITHDRAWALS_ENABLED;
-  const baseEnabled = rawFlag === undefined ? !isProduction : rawFlag === 'true';
+  const baseEnabled = rawFlag === undefined ? true : rawFlag === 'true';
 
   const startDate = parseDate(env.MANUAL_WITHDRAWALS_WINDOW_START);
   const endDate = parseDate(env.MANUAL_WITHDRAWALS_WINDOW_END);
