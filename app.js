@@ -16,34 +16,43 @@ const notificationRoutes = require('./routes/notification.route.js');
 const adminRoutes = require('./routes/admin.route.js');
 const openApiSpec = require('./docs/openapi.json');
 
-const DEFAULT_ALLOWED_ORIGINS = ['https://kolskinv.vercel.app'];
+const DEFAULT_ALLOWED_ORIGINS = ['https://kolskinv.vercel.app', 'https://www.kolskinv.vercel.app'];
+
+function normalizeOrigin(value) {
+  if (!value || typeof value !== 'string') return '';
+  return value
+    .trim()
+    .replace(/^['\"]|['\"]$/g, '')
+    .replace(/\/$/, '')
+    .toLowerCase();
+}
 
 function buildAllowedOrigins() {
   const fromEnv = (process.env.ALLOWED_ORIGINS || '')
     .split(',')
-    .map((origin) => origin.trim())
+    .map((origin) => normalizeOrigin(origin))
     .filter(Boolean);
 
   if (fromEnv.length > 0) {
-    return fromEnv;
+    return Array.from(new Set(fromEnv));
   }
 
   if (process.env.NODE_ENV !== 'production') {
-    return [
+    return Array.from(new Set([
       ...DEFAULT_ALLOWED_ORIGINS,
       'http://localhost:3000',
       'http://localhost:5173',
       'http://127.0.0.1:3000',
       'http://127.0.0.1:5173'
-    ];
+    ].map((origin) => normalizeOrigin(origin))));
   }
 
-  return DEFAULT_ALLOWED_ORIGINS;
+  return Array.from(new Set(DEFAULT_ALLOWED_ORIGINS.map((origin) => normalizeOrigin(origin))));
 }
 
 const allowedOrigins = buildAllowedOrigins();
 function isAllowedOrigin(origin) {
-  return allowedOrigins.includes(origin);
+  return allowedOrigins.includes(normalizeOrigin(origin));
 }
 
 const allowedMethods = (process.env.CORS_ALLOWED_METHODS || 'GET,POST,PUT,PATCH,DELETE,OPTIONS')
