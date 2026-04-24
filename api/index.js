@@ -52,12 +52,18 @@ function applyCorsHeadersOnFailure(req, res) {
 
 module.exports = async (req, res) => {
     try {
+        // Never block CORS preflight on database availability.
+        if (req.method === 'OPTIONS') {
+            return app(req, res);
+        }
+
         await connectToDatabase();
         return app(req, res);
     } catch (error) {
         applyCorsHeadersOnFailure(req, res);
-        return res.status(500).json({
+        return res.status(503).json({
             success: false,
+            code: 'DATABASE_UNAVAILABLE',
             message: 'Database connection failed'
         });
     }

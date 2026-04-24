@@ -24,6 +24,7 @@ describe('Serverless handler CORS on DB failure', () => {
     const handler = require(handlerPath);
 
     const req = {
+      method: 'POST',
       headers: {
         origin: 'https://kolskinv.vercel.app',
       },
@@ -48,13 +49,49 @@ describe('Serverless handler CORS on DB failure', () => {
 
     await handler(req, response);
 
-    expect(response.statusCode).toBe(500);
+    expect(response.statusCode).toBe(503);
     expect(response.payload).toEqual({
       success: false,
+      code: 'DATABASE_UNAVAILABLE',
       message: 'Database connection failed',
     });
     expect(response.headers['Access-Control-Allow-Origin']).toBe('https://kolskinv.vercel.app');
     expect(response.headers['Access-Control-Allow-Credentials']).toBe('true');
     expect(response.headers.Vary).toBe('Origin');
+  });
+
+  it('does not wait for DB on OPTIONS preflight requests', async () => {
+    process.env.NODE_ENV = 'production';
+    process.env.ALLOWED_ORIGINS = 'https://kolskinv.vercel.app';
+
+    const appMock = jest.fn().mockResolvedValue(undefined);
+    const connectToDatabaseMock = jest.fn().mockRejectedValue(new Error('db down'));
+
+    jest.doMock(appPath, () => appMock);
+    jest.doMock(dbPath, () => ({
+      connectToDatabase: connectToDatabaseMock,
+    }));
+
+    // eslint-disable-next-line global-require
+    const handler = require(handlerPath);
+
+    const req = {
+      method: 'OPTIONS',
+      headers: {
+        origin: 'https://kolskinv.vercel.app',
+      },
+    };
+
+    const response = {
+      setHeader() {},
+      status() { return this; },
+      json() { return this; },
+    };
+
+    await handler(req, response);
+
+    expect(connectToDatabaseMock).not.toHaveBeenCalled();
+    expect(appMock).toHaveBeenCalledTimes(1);
+    expect(appMock).toHaveBeenCalledWith(req, response);
   });
 });

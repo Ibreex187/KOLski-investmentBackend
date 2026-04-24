@@ -23,8 +23,10 @@ async function connectToDatabase() {
         throw new Error("DATABASE_URI is not configured");
     }
 
+    const serverSelectionTimeoutMS = Number(process.env.DB_SERVER_SELECTION_TIMEOUT_MS || 5000);
+
     connectingPromise = mongoose.connect(process.env.DATABASE_URI, {
-        serverSelectionTimeoutMS: 10000,
+        serverSelectionTimeoutMS,
     })
         .then((connection) => {
             cachedConnection = connection;
