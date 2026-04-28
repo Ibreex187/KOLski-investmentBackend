@@ -52,7 +52,11 @@ function buildAllowedOrigins() {
 
 const allowedOrigins = buildAllowedOrigins();
 function isAllowedOrigin(origin) {
-  return allowedOrigins.includes(normalizeOrigin(origin));
+  const allowed = allowedOrigins.includes(normalizeOrigin(origin));
+  if (!allowed) {
+    console.warn('Blocked CORS origin:', origin);
+  }
+  return allowed;
 }
 
 const allowedMethods = (process.env.CORS_ALLOWED_METHODS || 'GET,POST,PUT,PATCH,DELETE,OPTIONS')
