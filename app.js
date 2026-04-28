@@ -71,15 +71,18 @@ const allowedHeaders = (process.env.CORS_ALLOWED_HEADERS || 'Content-Type,Author
 
 const corsOptions = {
   origin(origin, callback) {
+    console.log('CORS request from origin:', origin);
     // Allow server-to-server calls and local tools with no Origin header.
     if (!origin) {
       return callback(null, true);
     }
 
     if (isAllowedOrigin(origin)) {
+      console.log('CORS allowed for origin:', origin);
       return callback(null, true);
     }
 
+    console.warn('CORS blocked for origin:', origin);
     const corsError = new Error('CORS origin not allowed');
     corsError.status = 403;
     corsError.code = 'CORS_ORIGIN_NOT_ALLOWED';
