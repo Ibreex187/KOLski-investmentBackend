@@ -16,15 +16,21 @@ const notificationRoutes = require('./routes/notification.route.js');
 const adminRoutes = require('./routes/admin.route.js');
 const openApiSpec = require('./docs/openapi.json');
 
-const DEFAULT_ALLOWED_ORIGINS = ['https://kolskinv.vercel.app', 'https://www.kolskinv.vercel.app'];
+// Add both with and without 'www' for frontend CORS
+const DEFAULT_ALLOWED_ORIGINS = [
+  'https://kolskinv.vercel.app',
+  'https://www.kolskinv.vercel.app'
+];
 
 function normalizeOrigin(value) {
   if (!value || typeof value !== 'string') return '';
-  return value
-    .trim()
-    .replace(/^['\"]|['\"]$/g, '')
-    .replace(/\/$/, '')
-    .toLowerCase();
+  // Remove protocol, trailing slash, lowercase, and www. for comparison
+  let origin = value.trim().replace(/^['"]|['"]$/g, '').replace(/\/$/, '').toLowerCase();
+  // Remove trailing slash if present
+  if (origin.endsWith('/')) origin = origin.slice(0, -1);
+  // Remove www. for comparison
+  origin = origin.replace('://www.', '://');
+  return origin;
 }
 
 function buildAllowedOrigins() {
@@ -51,10 +57,13 @@ function buildAllowedOrigins() {
 }
 
 const allowedOrigins = buildAllowedOrigins();
+console.log('Allowed CORS origins:', allowedOrigins);
 function isAllowedOrigin(origin) {
-  const allowed = allowedOrigins.includes(normalizeOrigin(origin));
+  const normalizedOrigin = normalizeOrigin(origin);
+  const allowed = allowedOrigins.includes(normalizedOrigin);
   if (!allowed) {
-    console.warn('Blocked CORS origin:', origin);
+    console.warn('Blocked CORS origin:', origin, '| Normalized:', normalizedOrigin);
+    console.warn('Allowed origins:', allowedOrigins);
   }
   return allowed;
 }
