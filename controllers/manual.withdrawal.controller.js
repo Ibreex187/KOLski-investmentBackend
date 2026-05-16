@@ -34,7 +34,7 @@ function requireManualWithdrawalWritesEnabled(res) {
 
 async function createManualWithdrawal(req, res) {
   try {
-    if (!requireManualWithdrawalWritesEnabled(res)) {
+    if (requireManualWithdrawalWritesEnabled(res) === false) {
       return null;
     }
 
@@ -140,7 +140,7 @@ async function listAdminManualWithdrawals(req, res) {
 
 async function approveManualWithdrawal(req, res) {
   try {
-    if (!requireManualWithdrawalWritesEnabled(res)) {
+    if (requireManualWithdrawalWritesEnabled(res) === false) {
       return null;
     }
 
@@ -169,7 +169,7 @@ async function approveManualWithdrawal(req, res) {
 
 async function rejectManualWithdrawal(req, res) {
   try {
-    if (!requireManualWithdrawalWritesEnabled(res)) {
+    if (requireManualWithdrawalWritesEnabled(res) === false) {
       return null;
     }
 

@@ -34,7 +34,7 @@ function requireManualDepositWritesEnabled(res) {
 
 async function createManualDeposit(req, res) {
   try {
-    if (!requireManualDepositWritesEnabled(res)) {
+    if (requireManualDepositWritesEnabled(res) === false) {
       return null;
     }
 
@@ -140,7 +140,7 @@ async function listAdminManualDeposits(req, res) {
 
 async function approveManualDeposit(req, res) {
   try {
-    if (!requireManualDepositWritesEnabled(res)) {
+    if (requireManualDepositWritesEnabled(res) === false) {
       return null;
     }
 
@@ -169,7 +169,7 @@ async function approveManualDeposit(req, res) {
 
 async function rejectManualDeposit(req, res) {
   try {
-    if (!requireManualDepositWritesEnabled(res)) {
+    if (requireManualDepositWritesEnabled(res) === false) {
       return null;
     }
 

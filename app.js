@@ -34,26 +34,26 @@ function normalizeOrigin(value) {
 }
 
 function buildAllowedOrigins() {
+  const isDev = process.env.NODE_ENV !== 'production';
+
   const fromEnv = (process.env.ALLOWED_ORIGINS || '')
     .split(',')
     .map((origin) => normalizeOrigin(origin))
     .filter(Boolean);
 
-  if (fromEnv.length > 0) {
-    return Array.from(new Set(fromEnv));
-  }
+  const base = fromEnv.length > 0 ? fromEnv : DEFAULT_ALLOWED_ORIGINS.map(normalizeOrigin);
 
-  if (process.env.NODE_ENV !== 'production') {
+  if (isDev) {
     return Array.from(new Set([
-      ...DEFAULT_ALLOWED_ORIGINS,
+      ...base,
       'http://localhost:3000',
       'http://localhost:5173',
       'http://127.0.0.1:3000',
       'http://127.0.0.1:5173'
-    ].map((origin) => normalizeOrigin(origin))));
+    ].map(normalizeOrigin)));
   }
 
-  return Array.from(new Set(DEFAULT_ALLOWED_ORIGINS.map((origin) => normalizeOrigin(origin))));
+  return Array.from(new Set(base));
 }
 
 const allowedOrigins = buildAllowedOrigins();
@@ -80,14 +80,12 @@ const allowedHeaders = (process.env.CORS_ALLOWED_HEADERS || 'Content-Type,Author
 
 const corsOptions = {
   origin(origin, callback) {
-    console.log('CORS request from origin:', origin);
     // Allow server-to-server calls and local tools with no Origin header.
     if (!origin) {
       return callback(null, true);
     }
 
     if (isAllowedOrigin(origin)) {
-      console.log('CORS allowed for origin:', origin);
       return callback(null, true);
     }
 
