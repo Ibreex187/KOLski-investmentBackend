@@ -1,5 +1,6 @@
 
 const { randomUUID } = require('crypto');
+const mongoose = require('mongoose');
 const { registerUser } = require('../services/user.registration.service.js');
 const {
   createSessionForUser,
@@ -9,7 +10,7 @@ const {
   revokeSessionById,
   listActiveSessionsForUser,
 } = require('../services/auth.service.js');
-const { sendWelcomeEmail, sendOtpEmail, sendVerificationEmail } = require('../utils/mailer.js');
+const { sendWelcomeEmail, sendVerificationEmail } = require('../utils/mailer.js');
 const UserModel = require('../models/user.model.js');
 const { issueOtp, verifyOtp, OTP_EXPIRY_MINUTES } = require('../services/otp.service.js');
 const jwt = require('jsonwebtoken');
@@ -296,18 +297,11 @@ const requestForgotPasswordotp = async (req, res) => {
         const foundUser = await UserModel.findOne({ email: normalizedEmail });
 
         if (foundUser) {
-            const otp = await issueOtp({
+            await issueOtp({
                 userId: foundUser._id,
                 email: foundUser.email,
                 purpose: 'forgot_password'
             });
-
-            await sendOtpEmail(
-                foundUser.email,
-                `${foundUser.name} ${foundUser.username ? `(${foundUser.username})` : ''}`,
-                otp,
-                'forgot password reset'
-            );
         }
 
         return res.status(200).json({
@@ -341,25 +335,20 @@ const verifyForgotPasswordotp = async (req, res) => {
             });
         }
 
+        const DUMMY_USER_ID = new mongoose.Types.ObjectId('000000000000000000000000');
         const foundUser = await UserModel.findOne({ email: normalizedEmail });
-        if (!foundUser) {
-            return res.status(400).json({
-                success: false,
-                message: 'Invalid OTP or email'
-            });
-        }
 
         const otpVerification = await verifyOtp({
-            userId: foundUser._id,
-            email: foundUser.email,
+            userId: foundUser ? foundUser._id : DUMMY_USER_ID,
+            email: normalizedEmail,
             purpose: 'forgot_password',
             otp
         });
 
-        if (!otpVerification.valid) {
-            return res.status(400).send({
+        if (!foundUser || !otpVerification.valid) {
+            return res.status(400).json({
                 success: false,
-                message: otpVerification.message
+                message: 'Invalid OTP or email'
             });
         }
 

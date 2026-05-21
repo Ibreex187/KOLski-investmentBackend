@@ -5,9 +5,20 @@ function createJsonRateLimiter({
   skipSuccessfulRequests = false,
 }) {
   const store = new Map();
+  let lastSweep = Date.now();
 
   return (req, res, next) => {
     const now = Date.now();
+
+    if (now - lastSweep >= windowMs) {
+      for (const [k, v] of store) {
+        if (v.resetAt <= now) {
+          store.delete(k);
+        }
+      }
+      lastSweep = now;
+    }
+
     const key = String(req.ip || req.headers['x-forwarded-for'] || 'global').split(',')[0].trim();
     const current = store.get(key);
 

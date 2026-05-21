@@ -1,7 +1,6 @@
 const mongoose = require('mongoose');
-const userModel = require('./user.model');
 
-const PortfoliioSchema = new mongoose.Schema({
+const PortfolioSchema = new mongoose.Schema({
     user_id:{type:mongoose.Schema.Types.ObjectId, ref:'User', required:true, unique:true},
     name:{type:String, required:true, trim:true, default:'My Portfolio'},
     currency:{type:String, default:'USD'},
@@ -21,6 +20,6 @@ const PortfoliioSchema = new mongoose.Schema({
 
 } , {timestamps:true, toJSON:{virtuals:true}, toObject:{virtuals:true}});  
 
-const PortfolioModel = mongoose.model('Portfolio', PortfoliioSchema);
+const PortfolioModel = mongoose.model('Portfolio', PortfolioSchema);
 
 module.exports = PortfolioModel; 

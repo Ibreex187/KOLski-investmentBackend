@@ -67,4 +67,3 @@ const requireRole = (...allowedRoles) => (req, res, next) => {
 
 authMiddleware.requireRole = requireRole;
 module.exports = authMiddleware;
-module.exports.requireRole = requireRole;
