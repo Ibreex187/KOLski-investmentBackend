@@ -1,6 +1,18 @@
-# Investment App Server
+# KOLski Backend
 
-Express and MongoDB backend for the investment app.
+Express + MongoDB API for [KOLski](https://github.com/Ibreex187/KOLski-investmentapp)
+([live demo](https://kolskinv.vercel.app)) — a simulated investing app: server-priced
+trades, an admin-reviewed deposit/withdrawal queue, scheduled price alerts, and a
+shared no-signup demo account. This README documents the backend specifically; see the
+[client repo](https://github.com/Ibreex187/KOLski-investmentapp#readme) for
+screenshots, features, and the overall pitch.
+
+[![CI](https://github.com/Ibreex187/KOLski-investmentBackend/actions/workflows/ci.yml/badge.svg)](https://github.com/Ibreex187/KOLski-investmentBackend/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
+This is a fake-money simulation. No real trades, deposits, or withdrawals occur, and
+`REAL_MONEY_TODO.md`/`PRODUCTION_AUTH_PLAN.md` (gitignored) track what real-money
+handling would still require — this project stops well short of that.
 
 ## Setup
 
