@@ -2,6 +2,9 @@ const mongoose = require('mongoose');
 const PortfolioModel = require('../models/portfolio.model');
 const HoldingModel = require('../models/holding.model');
 const TransactionModel = require('../models/transaction.model');
+const marketService = require('./market.service');
+const { adjustCash } = require('./cash.ledger');
+const { runUndo } = require('./pending.claim');
 
 function toMoney(value) {
   return parseFloat(Number(value || 0).toFixed(2));
@@ -103,137 +106,339 @@ async function getPortfolio(userId) {
   return { portfolio, holdings };
 }
 
-// Buy stock
-async function buyStock(userId, payload = {}) {
-  const { symbol, name, shares, price, sector, logoUrl } = payload;
-  const referenceId = extractReferenceId(payload);
+// ─── Trade execution ─────────────────────────────────────────────────────────
+//
+// Design notes
+//  * The execution price always comes from the market service. Any `price` a client
+//    sends is ignored, so a caller can never choose what they pay or receive.
+//  * Every balance/holding change is a single conditional, atomic update
+//    (`cash_balance >= cost`, `shares >= n`) rather than read-modify-write, so two
+//    concurrent orders cannot both pass a stale check and overspend / oversell.
+//  * With a replica set the steps also run in one transaction. On a standalone
+//    server (no transactions) each completed step registers an undo, which is run
+//    if a later step fails, so a failed order does not leave money half-moved.
 
-  return runWithOptionalTransaction(async (session) => {
-    const duplicateTx = await findExistingCompletedTransaction(userId, referenceId, session);
-    if (duplicateTx) {
-      const existingPortfolio = await findOneWithSession(PortfolioModel, { user_id: userId }, session);
-      return {
-        success: true,
-        duplicate: true,
-        reference_id: referenceId,
-        transaction_id: duplicateTx._id,
-        newBalance: existingPortfolio?.cash_balance ?? null,
-      };
-    }
+const SHARE_DECIMALS = 6;
+const PRICE_DECIMALS = 4;
+const ZERO_SHARES = 1e-9;
+const MIN_ORDER_VALUE = 0.01;
+const SYMBOL_PATTERN = /^[A-Z0-9.\-]{1,12}$/;
 
-    const portfolio = await findOneWithSession(PortfolioModel, { user_id: userId }, session);
-    if (!portfolio) throw new Error('Portfolio not found');
-    if (!symbol) throw new Error('Symbol is required');
-
-    const normalizedSymbol = normalizeSymbol(symbol);
-    const cost = toMoney(shares * price);
-    if (portfolio.cash_balance < cost) throw new Error('Insufficient funds');
-
-    portfolio.cash_balance = toMoney(portfolio.cash_balance - cost);
-    portfolio.last_updated = new Date();
-    await saveWithSession(portfolio, session);
-
-    const existing = await findOneWithSession(HoldingModel, { portfolio_id: portfolio._id, symbol: normalizedSymbol }, session);
-    if (existing) {
-      const totalShares = existing.shares + shares;
-      existing.average_price = toMoney(((existing.average_price * existing.shares) + cost) / totalShares);
-      existing.shares = totalShares;
-      await saveWithSession(existing, session);
-    } else {
-      await createWithSession(HoldingModel, {
-        portfolio_id: portfolio._id,
-        symbol: normalizedSymbol,
-        name: name || normalizedSymbol,
-        shares,
-        average_price: price,
-        sector,
-        logo_url: logoUrl,
-      }, session);
-    }
-
-    const transaction = await createWithSession(TransactionModel, {
-      userId,
-      symbol: normalizedSymbol,
-      type: 'buy',
-      shares,
-      price,
-      total: cost,
-      status: 'completed',
-      reference_id: referenceId,
-      metadata: { name, sector, logo_url: logoUrl },
-    }, session);
-
-    return {
-      success: true,
-      newBalance: portfolio.cash_balance,
-      reference_id: referenceId,
-      transaction_id: transaction._id,
-    };
-  });
+function roundTo(value, decimals) {
+  return Number(Number(value).toFixed(decimals));
 }
 
-// Sell stock
-async function sellStock(userId, payload = {}) {
-  const { symbol, shares, price } = payload;
-  const referenceId = extractReferenceId(payload);
+function httpError(message, status = 400, code) {
+  const error = new Error(message);
+  error.status = status;
+  if (code) error.code = code;
+  return error;
+}
 
-  return runWithOptionalTransaction(async (session) => {
-    const duplicateTx = await findExistingCompletedTransaction(userId, referenceId, session);
-    if (duplicateTx) {
-      const existingPortfolio = await findOneWithSession(PortfolioModel, { user_id: userId }, session);
+// The unique (userId, reference_id) index is a compound *sparse* index, which still
+// indexes documents whose reference_id is missing/null (userId is always present), so a
+// user's second reference-less transaction would collide. Every transaction therefore
+// stores a reference: the caller's idempotency key, or a generated one that cannot
+// collide and is never used for duplicate detection.
+const AUTO_REFERENCE_PREFIX = 'auto:';
+
+function storedReference(referenceId) {
+  return referenceId || `${AUTO_REFERENCE_PREFIX}${new mongoose.Types.ObjectId().toString()}`;
+}
+
+function isDuplicateKeyError(error) {
+  return error?.code === 11000;
+}
+
+function writeOptions(session, extra = {}) {
+  return session ? { ...extra, session } : extra;
+}
+
+function validateOrder({ symbol, shares }) {
+  const normalizedSymbol = normalizeSymbol(symbol).trim();
+  if (!normalizedSymbol) {
+    throw httpError('Symbol is required');
+  }
+  if (!SYMBOL_PATTERN.test(normalizedSymbol)) {
+    throw httpError('Symbol is invalid');
+  }
+  if (typeof shares !== 'number' || !Number.isFinite(shares) || shares <= 0) {
+    throw httpError('Shares must be a positive number');
+  }
+  if (roundTo(shares, SHARE_DECIMALS) !== shares) {
+    throw httpError(`Shares support at most ${SHARE_DECIMALS} decimal places`);
+  }
+  return { symbol: normalizedSymbol, shares };
+}
+
+// The one place a trade price is decided. Throws MARKET_DATA_UNAVAILABLE (503)
+// rather than trading on a missing or invalid quote.
+async function resolveExecutionPrice(symbol, getQuote) {
+  const quote = await getQuote(symbol);
+  const price = quote?.price;
+  if (typeof price !== 'number' || !Number.isFinite(price) || price <= 0) {
+    throw new marketService.MarketDataUnavailableError(`No valid price available for ${symbol}`);
+  }
+  return { price: roundTo(price, PRICE_DECIMALS), source: quote.source || 'live' };
+}
+
+async function buildDuplicateResult(userId, referenceId, existingTx, session = null) {
+  const portfolio = await findOneWithSession(PortfolioModel, { user_id: userId }, session);
+  return {
+    success: true,
+    duplicate: true,
+    reference_id: referenceId,
+    transaction_id: existingTx._id,
+    newBalance: portfolio?.cash_balance ?? null,
+  };
+}
+
+// Two requests carrying the same reference can both pass the pre-check. The unique
+// (userId, reference_id) index lets exactly one create its transaction; the other
+// rolls back and is reported as the duplicate it is.
+async function withDuplicateGuard(userId, referenceId, work) {
+  try {
+    return await work();
+  } catch (error) {
+    if (referenceId && isDuplicateKeyError(error)) {
+      const existing = await findExistingCompletedTransaction(userId, referenceId);
+      if (existing) {
+        return buildDuplicateResult(userId, referenceId, existing);
+      }
+    }
+    throw error;
+  }
+}
+
+// Atomically add a lot to a holding, recomputing the weighted average price in the
+// database so concurrent buys of the same symbol cannot lose each other's update.
+async function addLot({ portfolioId, symbol, shares, cost, name, sector, logoUrl }, session = null) {
+  const currentShares = { $ifNull: ['$shares', 0] };
+  const currentAverage = { $ifNull: ['$average_price', 0] };
+  const newShares = { $add: [currentShares, shares] };
+
+  const fields = {
+    shares: { $round: [newShares, SHARE_DECIMALS] },
+    average_price: {
+      $round: [
+        { $divide: [{ $add: [{ $multiply: [currentAverage, currentShares] }, cost] }, newShares] },
+        PRICE_DECIMALS,
+      ],
+    },
+    // $literal keeps user-supplied text from being read as a field path / operator.
+    name: { $ifNull: ['$name', { $literal: name || symbol }] },
+    createdAt: { $ifNull: ['$createdAt', '$$NOW'] },
+    updatedAt: '$$NOW',
+  };
+  if (sector) fields.sector = { $ifNull: ['$sector', { $literal: String(sector) }] };
+  if (logoUrl) fields.logo_url = { $ifNull: ['$logo_url', { $literal: String(logoUrl) }] };
+
+  const run = () => HoldingModel.findOneAndUpdate(
+    { portfolio_id: portfolioId, symbol },
+    [{ $set: fields }],
+    writeOptions(session, {
+      upsert: true,
+      new: true,
+      updatePipeline: true,
+      setDefaultsOnInsert: false,
+      timestamps: false,
+    })
+  );
+
+  try {
+    return await run();
+  } catch (error) {
+    // Two first-time buys of one symbol race on the unique (portfolio, symbol) index.
+    // The loser simply re-runs and now updates the winner's document.
+    if (isDuplicateKeyError(error)) {
+      return run();
+    }
+    throw error;
+  }
+}
+
+// Exact inverse of addLot (used only for rollback).
+async function removeLot({ portfolioId, symbol, shares, cost }) {
+  const remaining = { $subtract: ['$shares', shares] };
+  await HoldingModel.findOneAndUpdate(
+    { portfolio_id: portfolioId, symbol },
+    [{
+      $set: {
+        shares: { $round: [remaining, SHARE_DECIMALS] },
+        average_price: {
+          $cond: [
+            { $gt: [remaining, ZERO_SHARES] },
+            { $round: [{ $divide: [{ $subtract: [{ $multiply: ['$average_price', '$shares'] }, cost] }, remaining] }, PRICE_DECIMALS] },
+            '$average_price',
+          ],
+        },
+      },
+    }],
+    { updatePipeline: true, timestamps: false }
+  );
+  await HoldingModel.deleteOne({ portfolio_id: portfolioId, symbol, shares: { $lte: ZERO_SHARES } });
+}
+
+async function findPortfolioOrThrow(userId, session) {
+  const portfolio = await findOneWithSession(PortfolioModel, { user_id: userId }, session);
+  if (!portfolio) {
+    throw httpError('Portfolio not found', 404);
+  }
+  return portfolio;
+}
+
+// Buy stock at the current market price.
+async function buyStock(userId, payload = {}, dependencies = {}) {
+  const getQuote = dependencies.getQuote || marketService.getQuote;
+  const referenceId = extractReferenceId(payload);
+  const { symbol, shares } = validateOrder(payload);
+  const { name, sector, logoUrl } = payload;
+
+  const duplicateTx = await findExistingCompletedTransaction(userId, referenceId);
+  if (duplicateTx) {
+    return buildDuplicateResult(userId, referenceId, duplicateTx);
+  }
+
+  const { price, source } = await resolveExecutionPrice(symbol, getQuote);
+  const cost = toMoney(shares * price);
+  if (cost < MIN_ORDER_VALUE) {
+    throw httpError('Order value is too small');
+  }
+
+  return withDuplicateGuard(userId, referenceId, () => runWithOptionalTransaction(async (session) => {
+    const undo = session ? null : [];
+
+    try {
+      const portfolio = await findPortfolioOrThrow(userId, session);
+
+      const debited = await adjustCash(userId, -cost, { requireFunds: true }, session);
+      if (!debited) {
+        throw httpError('Insufficient funds');
+      }
+      undo?.push(() => adjustCash(userId, cost));
+
+      await addLot({ portfolioId: portfolio._id, symbol, shares, cost, name, sector, logoUrl }, session);
+      undo?.push(() => removeLot({ portfolioId: portfolio._id, symbol, shares, cost }));
+
+      const transaction = await createWithSession(TransactionModel, {
+        userId,
+        symbol,
+        type: 'buy',
+        shares,
+        price,
+        total: cost,
+        status: 'completed',
+        reference_id: storedReference(referenceId),
+        metadata: { name, sector, logo_url: logoUrl, price_source: source },
+      }, session);
+
       return {
         success: true,
-        duplicate: true,
+        newBalance: debited.cash_balance,
+        symbol,
+        shares,
+        price,
+        total: cost,
+        price_source: source,
         reference_id: referenceId,
-        transaction_id: duplicateTx._id,
-        newBalance: existingPortfolio?.cash_balance ?? null,
+        transaction_id: transaction._id,
       };
+    } catch (error) {
+      if (undo) await runUndo(undo);
+      throw error;
     }
+  }));
+}
 
-    const portfolio = await findOneWithSession(PortfolioModel, { user_id: userId }, session);
-    if (!portfolio) throw new Error('Portfolio not found');
+// Sell stock at the current market price.
+async function sellStock(userId, payload = {}, dependencies = {}) {
+  const getQuote = dependencies.getQuote || marketService.getQuote;
+  const referenceId = extractReferenceId(payload);
+  const { symbol, shares } = validateOrder(payload);
 
-    const normalizedSymbol = normalizeSymbol(symbol);
-    const holding = await findOneWithSession(HoldingModel, { portfolio_id: portfolio._id, symbol: normalizedSymbol }, session);
-    if (!holding || holding.shares < shares) throw new Error('Not enough shares');
+  const duplicateTx = await findExistingCompletedTransaction(userId, referenceId);
+  if (duplicateTx) {
+    return buildDuplicateResult(userId, referenceId, duplicateTx);
+  }
 
-    const proceeds = toMoney(shares * price);
-    const costBasis = toMoney(holding.average_price * shares);
-    const realizedPnl = toMoney(proceeds - costBasis);
+  const { price, source } = await resolveExecutionPrice(symbol, getQuote);
+  const proceeds = toMoney(shares * price);
+  if (proceeds < MIN_ORDER_VALUE) {
+    throw httpError('Order value is too small');
+  }
 
-    portfolio.cash_balance = toMoney(portfolio.cash_balance + proceeds);
-    portfolio.last_updated = new Date();
-    if (portfolio.performance) {
-      portfolio.performance.realized_pnl = toMoney((portfolio.performance.realized_pnl || 0) + realizedPnl);
+  return withDuplicateGuard(userId, referenceId, () => runWithOptionalTransaction(async (session) => {
+    const undo = session ? null : [];
+
+    try {
+      const portfolio = await findPortfolioOrThrow(userId, session);
+
+      // Claim the shares first; only matches while enough are held. Returns the
+      // pre-update document so the cost basis is the one that was actually sold.
+      const holdingBefore = await HoldingModel.findOneAndUpdate(
+        { portfolio_id: portfolio._id, symbol, shares: { $gte: shares } },
+        [{ $set: { shares: { $round: [{ $subtract: ['$shares', shares] }, SHARE_DECIMALS] }, updatedAt: '$$NOW' } }],
+        writeOptions(session, { new: false, updatePipeline: true, timestamps: false })
+      );
+      if (!holdingBefore) {
+        throw httpError('Not enough shares');
+      }
+      undo?.push(() => HoldingModel.findOneAndUpdate(
+        { portfolio_id: portfolio._id, symbol },
+        [{ $set: { shares: { $round: [{ $add: ['$shares', shares] }, SHARE_DECIMALS] } } }],
+        { updatePipeline: true, timestamps: false }
+      ));
+
+      const costBasis = toMoney(holdingBefore.average_price * shares);
+      const realizedPnl = toMoney(proceeds - costBasis);
+
+      const credited = await adjustCash(userId, proceeds, { realizedPnlDelta: realizedPnl }, session);
+      if (!credited) {
+        throw httpError('Portfolio not found', 404);
+      }
+      undo?.push(() => adjustCash(userId, -proceeds, { realizedPnlDelta: -realizedPnl }));
+
+      const transaction = await createWithSession(TransactionModel, {
+        userId,
+        symbol,
+        type: 'sell',
+        shares,
+        price,
+        total: proceeds,
+        status: 'completed',
+        reference_id: storedReference(referenceId),
+        metadata: { realized_pnl: realizedPnl, price_source: source },
+      }, session);
+
+      // Housekeeping: drop the emptied position. Conditional, so a concurrent buy
+      // that re-added shares keeps its holding.
+      try {
+        await HoldingModel.deleteOne(
+          { portfolio_id: portfolio._id, symbol, shares: { $lte: ZERO_SHARES } },
+          writeOptions(session)
+        );
+      } catch (cleanupError) {
+        if (session) throw cleanupError;
+        console.error('Empty holding cleanup failed:', cleanupError.message);
+      }
+
+      return {
+        success: true,
+        newBalance: credited.cash_balance,
+        symbol,
+        shares,
+        price,
+        total: proceeds,
+        realized_pnl: realizedPnl,
+        price_source: source,
+        reference_id: referenceId,
+        transaction_id: transaction._id,
+      };
+    } catch (error) {
+      if (undo) await runUndo(undo);
+      throw error;
     }
-    await saveWithSession(portfolio, session);
-
-    if (holding.shares === shares) {
-      await deleteWithSession(holding, session);
-    } else {
-      holding.shares = toMoney(holding.shares - shares);
-      await saveWithSession(holding, session);
-    }
-
-    const transaction = await createWithSession(TransactionModel, {
-      userId,
-      symbol: normalizedSymbol,
-      type: 'sell',
-      shares,
-      price,
-      total: proceeds,
-      status: 'completed',
-      reference_id: referenceId,
-      metadata: { realized_pnl: realizedPnl },
-    }, session);
-
-    return {
-      success: true,
-      newBalance: portfolio.cash_balance,
-      reference_id: referenceId,
-      transaction_id: transaction._id,
-    };
-  });
+  }));
 }
 
 // Deposit funds
@@ -405,7 +610,8 @@ function exportTransactionsToCsv(transactions = []) {
     transaction.price ?? '',
     transaction.total ?? '',
     transaction.status || '',
-    transaction.reference_id || '',
+    // Generated placeholder references (see storedReference) are internal, not user-facing.
+    String(transaction.reference_id || '').startsWith(AUTO_REFERENCE_PREFIX) ? '' : (transaction.reference_id || ''),
   ].map(escapeCsvValue).join(',')));
 
   return [headers.join(','), ...rows].join('\n');

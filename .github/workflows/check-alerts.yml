@@ -1,0 +1,50 @@
+name: Check price alerts
+
+# Vercel's free (Hobby) plan only allows a daily cron, so this workflow is the real scheduler:
+# it calls the secured cron endpoint hourly on weekdays during US market hours (14:00-20:00
+# UTC). The daily cron in vercel.json is only a fallback.
+#
+# Why not every few minutes? The free market-data API allows ~25 calls per day, shared with
+# every user quote and trade. Each run costs up to ALERT_MAX_SYMBOLS_PER_RUN calls, so a tight
+# schedule would exhaust the quota and make trading return 503. Raise the frequency only with
+# a paid data plan (GitHub's minimum interval is 5 minutes; runs can also be delayed).
+#
+# Required repository secrets (Settings -> Secrets and variables -> Actions):
+#   API_BASE_URL  e.g. https://ko-lski-investment-backend.vercel.app   (no trailing slash)
+#   CRON_SECRET   must equal the CRON_SECRET environment variable set in Vercel
+#
+# Note: GitHub pauses scheduled workflows after 60 days without repository activity; re-enable
+# them from the Actions tab if that happens.
+
+on:
+  schedule:
+    - cron: '0 14-20 * * 1-5'
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: check-alerts
+  cancel-in-progress: false
+
+jobs:
+  check-alerts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Call the alert check endpoint
+        env:
+          API_BASE_URL: ${{ secrets.API_BASE_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          if [ -z "$API_BASE_URL" ] || [ -z "$CRON_SECRET" ]; then
+            echo "::error::Set the API_BASE_URL and CRON_SECRET repository secrets."
+            exit 1
+          fi
+
+          curl --silent --show-error --fail-with-body \
+            --max-time 60 --retry 2 --retry-delay 5 \
+            --request POST \
+            --header "Authorization: Bearer ${CRON_SECRET}" \
+            "${API_BASE_URL%/}/api/v1/internal/cron/check-alerts"
+          echo

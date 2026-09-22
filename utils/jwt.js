@@ -1,8 +1,42 @@
 const { createHash, randomUUID } = require('crypto');
 const jwt = require('jsonwebtoken');
 
-const ACCESS_TOKEN_SECRET = process.env.JWT_SECRET || 'testsecret';
-const REFRESH_TOKEN_SECRET = process.env.JWT_REFRESH_SECRET || ACCESS_TOKEN_SECRET;
+// Placeholder values from .env.example / docs must never sign real tokens.
+const INSECURE_SECRET_VALUES = new Set(['change-me', 'change-me-too', 'changeme', 'secret', 'testsecret']);
+
+// Resolves the signing secrets, refusing to run with a missing or well-known secret.
+// Only the test environment (NODE_ENV=test) gets a built-in fallback so the suite
+// runs without configuration; anywhere else an unset JWT_SECRET is a startup error,
+// because a hardcoded fallback would let anyone forge tokens.
+function resolveJwtSecrets(env = process.env) {
+    const isTest = env.NODE_ENV === 'test';
+    const isProduction = env.NODE_ENV === 'production';
+    const access = env.JWT_SECRET;
+
+    if (!access) {
+        if (isTest) {
+            return { access: 'testsecret', refresh: env.JWT_REFRESH_SECRET || 'testsecret' };
+        }
+        throw new Error('JWT_SECRET is not set. Define a long random value in your environment (see .env.example).');
+    }
+
+    if (isProduction && INSECURE_SECRET_VALUES.has(access.trim().toLowerCase())) {
+        throw new Error('JWT_SECRET is set to a placeholder value. Use a long random secret in production.');
+    }
+
+    const refresh = env.JWT_REFRESH_SECRET || access;
+    if (isProduction) {
+        if (!env.JWT_REFRESH_SECRET) {
+            console.warn('JWT_REFRESH_SECRET is not set; refresh tokens are signed with JWT_SECRET. Set a separate value.');
+        } else if (INSECURE_SECRET_VALUES.has(refresh.trim().toLowerCase())) {
+            throw new Error('JWT_REFRESH_SECRET is set to a placeholder value. Use a long random secret in production.');
+        }
+    }
+
+    return { access, refresh };
+}
+
+const { access: ACCESS_TOKEN_SECRET, refresh: REFRESH_TOKEN_SECRET } = resolveJwtSecrets();
 const ACCESS_TOKEN_TTL = process.env.JWT_EXPIRES_IN || '5h';
 const REFRESH_TOKEN_TTL = process.env.JWT_REFRESH_EXPIRES_IN || '7d';
 
@@ -54,6 +88,7 @@ const verifyRefreshToken = (token) => {
 };
 
 module.exports = {
+    resolveJwtSecrets,
     ACCESS_TOKEN_TTL,
     REFRESH_TOKEN_TTL,
     generateAccessToken,

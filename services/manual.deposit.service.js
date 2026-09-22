@@ -1,6 +1,7 @@
 const mongoose = require('mongoose');
-const PortfolioModel = require('../models/portfolio.model');
 const TransactionModel = require('../models/transaction.model');
+const { adjustCash } = require('./cash.ledger');
+const { claimPendingTransaction, releaseClaim, runUndo } = require('./pending.claim');
 const { buildCreatedAtFilter } = require('../utils/date.range');
 
 function toMoney(value) {
@@ -62,13 +63,6 @@ async function findManyWithSession(model, filter, options, session) {
   }
 
   return query;
-}
-
-async function saveWithSession(document, session) {
-  if (session) {
-    return document.save({ session });
-  }
-  return document.save();
 }
 
 async function createWithSession(model, payload, session) {
@@ -140,44 +134,61 @@ async function createManualDepositRequest(userId, payload = {}) {
     throw new Error('Only USD is supported for manual deposits right now');
   }
 
-  return runWithOptionalTransaction(async (session) => {
-    const existing = await findOneWithSession(TransactionModel, {
-      userId,
-      type: 'deposit',
-      reference_id: idempotencyKey,
-      'metadata.deposit_flow': 'manual_bank_transfer',
-    }, session);
+  try {
+    return await runWithOptionalTransaction(async (session) => {
+      const existing = await findOneWithSession(TransactionModel, {
+        userId,
+        type: 'deposit',
+        reference_id: idempotencyKey,
+        'metadata.deposit_flow': 'manual_bank_transfer',
+      }, session);
 
-    if (existing) {
+      if (existing) {
+        return {
+          ...formatDepositRecord(existing),
+          idempotent: true,
+        };
+      }
+
+      const tx = await createWithSession(TransactionModel, {
+        userId,
+        symbol: 'CASH',
+        type: 'deposit',
+        total: amount,
+        status: 'pending',
+        reference_id: idempotencyKey,
+        note,
+        metadata: {
+          deposit_flow: 'manual_bank_transfer',
+          source: 'deposits.manual',
+          currency,
+          transfer_reference: transferReference,
+          idempotency_key: idempotencyKey,
+          submitted_at: new Date(),
+        },
+      }, session);
+
       return {
-        ...formatDepositRecord(existing),
-        idempotent: true,
+        ...formatDepositRecord(tx),
+        idempotent: false,
       };
+    });
+  } catch (error) {
+    // A simultaneous request with the same key won the unique (userId, reference_id)
+    // index; treat this one as the idempotent repeat it is.
+    if (error?.code === 11000) {
+      const existing = await TransactionModel.findOne({
+        userId,
+        type: 'deposit',
+        reference_id: idempotencyKey,
+        'metadata.deposit_flow': 'manual_bank_transfer',
+      });
+      if (existing) {
+        return { ...formatDepositRecord(existing), idempotent: true };
+      }
     }
-
-    const tx = await createWithSession(TransactionModel, {
-      userId,
-      symbol: 'CASH',
-      type: 'deposit',
-      total: amount,
-      status: 'pending',
-      reference_id: idempotencyKey,
-      note,
-      metadata: {
-        deposit_flow: 'manual_bank_transfer',
-        source: 'deposits.manual',
-        currency,
-        transfer_reference: transferReference,
-        idempotency_key: idempotencyKey,
-        submitted_at: new Date(),
-      },
-    }, session);
-
-    return {
-      ...formatDepositRecord(tx),
-      idempotent: false,
-    };
-  });
+    throw error;
+  }
 }
 
 async function listUserManualDeposits(userId, options = {}) {
@@ -278,86 +289,81 @@ async function listAdminManualDeposits(options = {}) {
 }
 
 async function approveManualDeposit({ depositId, adminUserId, adminNote, bankSettlementRef }) {
+  const baseFilter = {
+    _id: depositId,
+    type: 'deposit',
+    'metadata.deposit_flow': 'manual_bank_transfer',
+  };
+  const approval = {
+    approved_by: adminUserId,
+    approved_at: new Date(),
+    bank_settlement_ref: bankSettlementRef || null,
+    admin_note: adminNote || null,
+  };
+
   return runWithOptionalTransaction(async (session) => {
-    const tx = await findOneWithSession(TransactionModel, {
-      _id: depositId,
-      type: 'deposit',
-      'metadata.deposit_flow': 'manual_bank_transfer',
-    }, session);
+    const undo = session ? null : [];
 
-    if (!tx) {
-      throw makeNotFoundError('Deposit not found');
-    }
+    try {
+      // Claim first: only one concurrent approver can move a request out of "pending",
+      // so the money below is applied at most once.
+      const tx = await claimPendingTransaction({ filter: baseFilter, status: 'completed', metadata: approval }, session);
+      if (!tx) {
+        throw await explainUnclaimed(baseFilter, session);
+      }
+      undo?.push(() => releaseClaim(tx._id, 'completed', Object.keys(approval)));
 
-    if (tx.status !== 'pending') {
-      throw makeStateTransitionError('Deposit is already reviewed');
-    }
-
-    const portfolio = await findOneWithSession(PortfolioModel, { user_id: tx.userId }, session);
+    const portfolio = await adjustCash(tx.userId, tx.total, { totalDepositedDelta: tx.total }, session);
     if (!portfolio) {
       throw makeNotFoundError('Portfolio not found for deposit owner');
     }
-
-    tx.status = 'completed';
-    tx.metadata = {
-      ...(tx.metadata || {}),
-      approved_by: adminUserId,
-      approved_at: new Date(),
-      bank_settlement_ref: bankSettlementRef || null,
-      admin_note: adminNote || null,
-    };
-
-    portfolio.cash_balance = toMoney(portfolio.cash_balance + tx.total);
-    portfolio.total_deposited = toMoney((portfolio.total_deposited || 0) + tx.total);
-    portfolio.last_updated = new Date();
-
-    await saveWithSession(tx, session);
-    await saveWithSession(portfolio, session);
 
     return {
       deposit_id: tx._id,
       status: tx.status,
       credited_amount: tx.total,
       new_cash_balance: portfolio.cash_balance,
-      approved_at: tx.metadata.approved_at,
+      approved_at: approval.approved_at,
     };
+    } catch (error) {
+      if (undo) await runUndo(undo);
+      throw error;
+    }
   });
 }
 
+async function explainUnclaimed(baseFilter, session) {
+  const query = TransactionModel.exists(baseFilter);
+  const exists = await (session ? query.session(session) : query);
+  return exists
+    ? makeStateTransitionError('Deposit is already reviewed')
+    : makeNotFoundError('Deposit not found');
+}
+
 async function rejectManualDeposit({ depositId, adminUserId, reason, adminNote }) {
-  return runWithOptionalTransaction(async (session) => {
-    const tx = await findOneWithSession(TransactionModel, {
-      _id: depositId,
-      type: 'deposit',
-      'metadata.deposit_flow': 'manual_bank_transfer',
-    }, session);
+  const baseFilter = {
+    _id: depositId,
+    type: 'deposit',
+    'metadata.deposit_flow': 'manual_bank_transfer',
+  };
+  const rejection = {
+    rejected_by: adminUserId,
+    rejected_at: new Date(),
+    rejection_reason: reason,
+    admin_note: adminNote || null,
+  };
 
-    if (!tx) {
-      throw makeNotFoundError('Deposit not found');
-    }
+  const tx = await claimPendingTransaction({ filter: baseFilter, status: 'failed', metadata: rejection });
+  if (!tx) {
+    throw await explainUnclaimed(baseFilter, null);
+  }
 
-    if (tx.status !== 'pending') {
-      throw makeStateTransitionError('Deposit is already reviewed');
-    }
-
-    tx.status = 'failed';
-    tx.metadata = {
-      ...(tx.metadata || {}),
-      rejected_by: adminUserId,
-      rejected_at: new Date(),
-      rejection_reason: reason,
-      admin_note: adminNote || null,
-    };
-
-    await saveWithSession(tx, session);
-
-    return {
-      deposit_id: tx._id,
-      status: tx.status,
-      rejected_at: tx.metadata.rejected_at,
-      reason,
-    };
-  });
+  return {
+    deposit_id: tx._id,
+    status: tx.status,
+    rejected_at: rejection.rejected_at,
+    reason,
+  };
 }
 
 module.exports = {

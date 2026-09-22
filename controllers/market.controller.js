@@ -6,6 +6,15 @@ const { success, error } = require('../utils/response');
 
 const isTestEnv = process.env.NODE_ENV === 'test';
 
+// Provider outages surface as 503 with a stable code so clients can show a
+// "prices unavailable" state instead of a generic failure.
+const respondWithMarketError = (res, err) => {
+  if (err?.code === 'MARKET_DATA_UNAVAILABLE') {
+    return error(res, { message: err.message, code: err.code }, err.status || 503);
+  }
+  return error(res, err.message, 500);
+};
+
 // ─── GET /api/market/quote/:symbol ───────────────────────────
 const fetchQuote = async (req, res) => {
   const { symbol } = req.params;
@@ -19,7 +28,7 @@ const fetchQuote = async (req, res) => {
     }
     return success(res, quote);
   } catch (err) {
-    return error(res, err.message, 500);
+    return respondWithMarketError(res, err);
   }
 };
 
@@ -39,7 +48,7 @@ const fetchSearch = async (req, res) => {
     }
     return success(res, results);
   } catch (err) {
-    return error(res, err.message, 500);
+    return respondWithMarketError(res, err);
   }
 };
 
@@ -56,7 +65,7 @@ const fetchHistoricalData = async (req, res) => {
     }
     return success(res, history);
   } catch (err) {
-    return error(res, err.message, 500);
+    return respondWithMarketError(res, err);
   }
 };
 
@@ -100,7 +109,7 @@ const fetchPortfolioPrices = async (req, res) => {
     if (isTestEnv) {
       return res.status(200).json({});
     }
-    return error(res, err.message, 500);
+    return respondWithMarketError(res, err);
   }
 };
 

@@ -340,97 +340,126 @@ async function getPortfolio(req, res) {
   }
 }
 
+// Maps trade failures to HTTP responses. Errors raised on purpose by the service carry
+// a `status`; anything else is unexpected and must not leak internals to the client.
+function respondWithTradeError(res, err) {
+  if (err?.code === 'MARKET_DATA_UNAVAILABLE') {
+    return error(res, { message: err.message, code: err.code }, err.status || 503);
+  }
+  if (err?.status) {
+    return error(res, err.message, err.status);
+  }
+  console.error('Trade failed unexpectedly:', err);
+  return error(res, 'Trade could not be completed', 500);
+}
+
+async function sendTradeEmail({ userId, title, message }) {
+  try {
+    const UserModel = require('../models/user.model');
+    const { sendNotificationEmail } = require('../utils/mailer');
+    const user = await UserModel.findById(userId);
+    if (user && user.email) {
+      await sendNotificationEmail({ to: user.email, name: user.name, title, message });
+    }
+  } catch (e) {
+    // Log but do not block response
+    console.error('Notification email failed:', e.message);
+  }
+}
+
+// Human-readable summary the client can show as-is, including the price it was filled at.
+function withTradeMessage(result, action) {
+  if (result.duplicate) {
+    return { ...result, message: 'This order was already processed.' };
+  }
+  const verb = action === 'buy' ? 'Bought' : 'Sold';
+  return { ...result, message: `${verb} ${result.shares} ${result.symbol} at $${result.price}.` };
+}
+
+function isValidTradeBody(body) {
+  return Boolean(body?.symbol) && typeof body.symbol === 'string' && body.symbol.trim();
+}
+
+function tradeReference(req) {
+  return req.get('x-idempotency-key') || req.body.reference_id || req.body.client_request_id;
+}
+
 // POST /api/portfolio/buy
+// The execution price is decided server-side from the market feed. A `price` in the
+// request body is intentionally ignored (clients may still send it for display).
 async function buyStock(req, res) {
   try {
-    const { symbol, shares, price } = req.body;
-    if (!symbol || typeof symbol !== 'string' || !symbol.trim()) {
+    const { symbol, shares } = req.body;
+    if (!isValidTradeBody(req.body)) {
       return error(res, 'Symbol is required', 400);
     }
     if (!shares || typeof shares !== 'number' || shares <= 0) {
       return error(res, 'Shares must be a positive number', 400);
     }
-    if (!price || typeof price !== 'number' || price <= 0) {
-      return error(res, 'Price must be a positive number', 400);
-    }
+
     const result = await portfolioService.buyStock(req.user._id, {
-      ...req.body,
-      reference_id: req.get('x-idempotency-key') || req.body.reference_id || req.body.client_request_id,
+      symbol,
+      shares,
+      name: req.body.name,
+      sector: req.body.sector,
+      logoUrl: req.body.logoUrl,
+      reference_id: tradeReference(req),
     });
-    // Send notification email
-    try {
-      const UserModel = require('../models/user.model');
-      const { sendNotificationEmail } = require('../utils/mailer');
-      const user = await UserModel.findById(req.user._id);
-      if (user && user.email) {
-        await sendNotificationEmail({
-          to: user.email,
-          name: user.name,
-          title: 'Stock Purchase Confirmation',
-          message: `You have successfully purchased ${req.body.shares} shares of ${req.body.symbol}.`,
-        });
-      }
-    } catch (e) {
-      // Log but do not block response
-      console.error('Notification email failed:', e.message);
+
+    if (!result.duplicate) {
+      await sendTradeEmail({
+        userId: req.user._id,
+        title: 'Stock Purchase Confirmation',
+        message: `You have successfully purchased ${result.shares} shares of ${result.symbol} at ${result.price}.`,
+      });
+      await createInAppNotification({
+        userId: req.user._id,
+        type: 'trade',
+        title: 'Stock Purchase Confirmation',
+        message: `You purchased ${result.shares} shares of ${result.symbol} at ${result.price}.`,
+        data: { symbol: result.symbol, shares: result.shares, price: result.price, action: 'buy' },
+      });
     }
-    await createInAppNotification({
-      userId: req.user._id,
-      type: 'trade',
-      title: 'Stock Purchase Confirmation',
-      message: `You purchased ${req.body.shares} shares of ${req.body.symbol}.`,
-      data: { symbol: req.body.symbol, shares: req.body.shares, price: req.body.price, action: 'buy' },
-    });
-    return success(res, result);
+    return success(res, withTradeMessage(result, 'buy'));
   } catch (err) {
-    return error(res, err.message, 400);
+    return respondWithTradeError(res, err);
   }
 }
 
 // POST /api/portfolio/sell
 async function sellStock(req, res) {
   try {
-    const { symbol, shares, price } = req.body;
-    if (!symbol || typeof symbol !== 'string' || !symbol.trim()) {
+    const { symbol, shares } = req.body;
+    if (!isValidTradeBody(req.body)) {
       return error(res, 'Symbol is required', 400);
     }
     if (!shares || typeof shares !== 'number' || shares <= 0) {
       return error(res, 'Shares must be a positive number', 400);
     }
-    if (!price || typeof price !== 'number' || price <= 0) {
-      return error(res, 'Price must be a positive number', 400);
-    }
+
     const result = await portfolioService.sellStock(req.user._id, {
-      ...req.body,
-      reference_id: req.get('x-idempotency-key') || req.body.reference_id || req.body.client_request_id,
+      symbol,
+      shares,
+      reference_id: tradeReference(req),
     });
-    // Send notification email
-    try {
-      const UserModel = require('../models/user.model');
-      const { sendNotificationEmail } = require('../utils/mailer');
-      const user = await UserModel.findById(req.user._id);
-      if (user && user.email) {
-        await sendNotificationEmail({
-          to: user.email,
-          name: user.name,
-          title: 'Stock Sale Confirmation',
-          message: `You have successfully sold ${req.body.shares} shares of ${req.body.symbol}.`,
-        });
-      }
-    } catch (e) {
-      // Log but do not block response
-      console.error('Notification email failed:', e.message);
+
+    if (!result.duplicate) {
+      await sendTradeEmail({
+        userId: req.user._id,
+        title: 'Stock Sale Confirmation',
+        message: `You have successfully sold ${result.shares} shares of ${result.symbol} at ${result.price}.`,
+      });
+      await createInAppNotification({
+        userId: req.user._id,
+        type: 'trade',
+        title: 'Stock Sale Confirmation',
+        message: `You sold ${result.shares} shares of ${result.symbol} at ${result.price}.`,
+        data: { symbol: result.symbol, shares: result.shares, price: result.price, action: 'sell' },
+      });
     }
-    await createInAppNotification({
-      userId: req.user._id,
-      type: 'trade',
-      title: 'Stock Sale Confirmation',
-      message: `You sold ${req.body.shares} shares of ${req.body.symbol}.`,
-      data: { symbol: req.body.symbol, shares: req.body.shares, price: req.body.price, action: 'sell' },
-    });
-    return success(res, result);
+    return success(res, withTradeMessage(result, 'sell'));
   } catch (err) {
-    return error(res, err.message, 400);
+    return respondWithTradeError(res, err);
   }
 }
 

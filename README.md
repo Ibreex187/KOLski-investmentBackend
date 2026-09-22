@@ -5,8 +5,8 @@ Express and MongoDB backend for the investment app.
 ## Setup
 
 1. Copy `.env.example` to `.env`.
-2. Set `DATABASE_URI` and `JWT_SECRET`.
-3. Add `ALPHA_VANTAGE_KEY` if you want live market data.
+2. Set `DATABASE_URI` and `JWT_SECRET`. The server will not start without `JWT_SECRET`, and in production it rejects placeholder values such as `change-me`.
+3. Add `ALPHA_VANTAGE_KEY` for market data. Without it (or when the provider is down or rate limited) market endpoints return `503 MARKET_DATA_UNAVAILABLE` and trades are refused; the app never invents prices. For a demo without a key, set `ALLOW_DEMO_MARKET_DATA=true` to get fixed data labelled `source: "demo"`.
 4. Run `npm install`.
 
 Redis is optional in local development. If Redis is not running, the app starts normally and skips cache reads and writes.
@@ -59,9 +59,34 @@ Current CORS behavior:
 - Origins are allowlist-only.
 - Methods and headers are explicitly controlled by `CORS_ALLOWED_METHODS` and `CORS_ALLOWED_HEADERS`.
 
+## Price alerts on Vercel (scheduled checks)
+
+Serverless functions have no background timers, so alerts are checked by an external scheduler calling a secured endpoint, `GET|POST /api/v1/internal/cron/check-alerts`. (On a normal long-running server, `npm start` still runs the built-in timer.)
+
+Setup:
+
+1. Generate a secret: `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`.
+2. In Vercel, set `CRON_SECRET` to it and redeploy. Until it is set the endpoint answers `503` (it is never open).
+3. Vercel's free Hobby plan only allows one cron a day, so `vercel.json` runs a daily fallback. For frequent checks, add two repository secrets on GitHub (Settings, Secrets and variables, Actions): `API_BASE_URL` (your backend URL, no trailing slash) and `CRON_SECRET` (the same value). [check-alerts.yml](.github/workflows/check-alerts.yml) then calls the endpoint hourly on weekdays during US market hours. On a paid Vercel plan you can instead set the `crons` schedule in `vercel.json` (for example `*/5 * * * *`).
+
+Behaviour worth knowing:
+
+- Overlapping runs are safe: each alert is claimed with a conditional update, so it notifies once however many runs race.
+- The free market API allows about 25 calls a day, shared with every user quote and trade. Each run therefore checks at most `ALERT_MAX_SYMBOLS_PER_RUN` (default 2) symbols, one quote per symbol, least recently checked first, and the schedule above is deliberately sparse (about 14 calls a day at most). Polling every few minutes would use up the quota and make trades return `503`, so only speed it up with a paid data plan.
+- Demo prices never trigger an alert.
+- The in-app notification is the record of delivery; the email is best-effort. If creating the notification fails it is retried, up to `ALERT_MAX_NOTIFY_ATTEMPTS` (default 3) times within 24 hours.
+
+## Trading integrity
+
+- **Server-side pricing.** `POST /portfolio/buy` and `/sell` fill at the current market price fetched by the server. A `price` in the request body is ignored.
+- **No double-spend.** Cash and holdings change through single conditional atomic updates (`cash_balance >= cost`, `shares >= n`), so concurrent orders cannot overspend or oversell. On a replica set (e.g. Atlas) the steps also run in one transaction; on a standalone MongoDB a failed order is rolled back step by step.
+- **Admin approvals are exactly-once.** Approving or rejecting a manual deposit/withdrawal first claims the `pending` request with one conditional update, so simultaneous reviewers cannot apply the money twice, and the balance is changed with an atomic increment rather than saving a stale copy. A withdrawal is only approved while the balance still covers it.
+- **Idempotent retries.** Send an `x-idempotency-key` header (or `reference_id`). A repeated key returns the original result with `duplicate: true`. A unique `(userId, reference_id)` index enforces this even for simultaneous requests.
+
 ## Test
 
 - `npm test` runs the full Jest suite.
+- The trade integration tests (`test/trade.*.integration.test.js`) run against a real in-memory MongoDB via `mongodb-memory-server`. The first run downloads a mongod binary (several hundred MB, cached afterwards).
 - `npm run test:alerts` runs the analytics and alert tests.
 - `npm run test:market` runs the market endpoint tests.
 - `npm run test:portfolio` runs the portfolio tests.

@@ -31,6 +31,141 @@
         }
       }
     },
+    "/api/v1/portfolio/buy": {
+      "post": {
+        "summary": "Buy shares at the current market price",
+        "description": "The execution price is decided by the server from live market data. Any price sent in the request body is ignored. Send an idempotency key (x-idempotency-key header or reference_id) so retries are safe; a repeated key returns the original result with duplicate: true.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "x-idempotency-key",
+            "in": "header",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Makes retries safe. Also accepted as reference_id in the body."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "symbol",
+                  "shares"
+                ],
+                "properties": {
+                  "symbol": {
+                    "type": "string",
+                    "example": "AAPL"
+                  },
+                  "shares": {
+                    "type": "number",
+                    "exclusiveMinimum": 0,
+                    "description": "Up to 6 decimal places.",
+                    "example": 2
+                  },
+                  "name": {
+                    "type": "string",
+                    "description": "Company name (used when a holding is first created)."
+                  },
+                  "sector": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Order filled (or a duplicate of an earlier order). Response includes symbol, shares, price, total, price_source (live|demo), newBalance, transaction_id."
+          },
+          "400": {
+            "description": "Invalid order, insufficient funds, or order value too small"
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "404": {
+            "description": "Portfolio not found"
+          },
+          "503": {
+            "description": "Market data unavailable (error.code = MARKET_DATA_UNAVAILABLE). The order is not placed; retry later."
+          }
+        }
+      }
+    },
+    "/api/v1/portfolio/sell": {
+      "post": {
+        "summary": "Sell shares at the current market price",
+        "description": "The execution price is decided by the server from live market data. Any price sent in the request body is ignored. Send an idempotency key (x-idempotency-key header or reference_id) so retries are safe; a repeated key returns the original result with duplicate: true.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "x-idempotency-key",
+            "in": "header",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Makes retries safe. Also accepted as reference_id in the body."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "symbol",
+                  "shares"
+                ],
+                "properties": {
+                  "symbol": {
+                    "type": "string",
+                    "example": "AAPL"
+                  },
+                  "shares": {
+                    "type": "number",
+                    "exclusiveMinimum": 0,
+                    "description": "Up to 6 decimal places.",
+                    "example": 2
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Order filled (or a duplicate of an earlier order). Response includes symbol, shares, price, total, price_source (live|demo), newBalance, transaction_id, realized_pnl."
+          },
+          "400": {
+            "description": "Invalid order, not enough shares, or order value too small"
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "404": {
+            "description": "Portfolio not found"
+          },
+          "503": {
+            "description": "Market data unavailable (error.code = MARKET_DATA_UNAVAILABLE). The order is not placed; retry later."
+          }
+        }
+      }
+    },
     "/api/v1/portfolio/dashboard": {
       "get": {
         "summary": "Get frontend-ready dashboard payload",

@@ -14,6 +14,10 @@ const transactionSchema = new mongoose.Schema({
 }, { timestamps: true, strict: 'throw' });
 
 transactionSchema.index({ userId: 1, createdAt: -1 });
+// NOTE: a compound sparse index still indexes documents whose reference_id is null/missing
+// (userId is always present), so two reference-less transactions for one user collide.
+// Every writer therefore stores a reference (see storedReference in portfolio.service).
+// A partialFilterExpression index would fix this properly but needs a data migration.
 transactionSchema.index({ userId: 1, reference_id: 1 }, { unique: true, sparse: true });
 
 const TransactionModel = mongoose.models.Transaction || mongoose.model('Transaction', transactionSchema);
