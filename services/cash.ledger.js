@@ -37,7 +37,7 @@ async function adjustCash(userId, delta, options = {}, session = null) {
   return PortfolioModel.findOneAndUpdate(
     filter,
     [{ $set: fields }],
-    { new: true, updatePipeline: true, timestamps: false, ...(session ? { session } : {}) }
+    { returnDocument: 'after', updatePipeline: true, timestamps: false, ...(session ? { session } : {}) }
   );
 }
 

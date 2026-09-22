@@ -39,9 +39,10 @@ const SessionSchema = new mongoose.Schema({
     default: Date.now,
   },
   expires_at: {
+    // Indexed below via schema.index(..., { expireAfterSeconds: 0 }) as a TTL index;
+    // index: true here would create a second, plain (non-expiring) duplicate index.
     type: Date,
     required: true,
-    index: true,
   },
   revoked_at: {
     type: Date,

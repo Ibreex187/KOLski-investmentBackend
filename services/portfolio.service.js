@@ -238,7 +238,7 @@ async function addLot({ portfolioId, symbol, shares, cost, name, sector, logoUrl
     [{ $set: fields }],
     writeOptions(session, {
       upsert: true,
-      new: true,
+      returnDocument: 'after',
       updatePipeline: true,
       setDefaultsOnInsert: false,
       timestamps: false,
@@ -378,7 +378,7 @@ async function sellStock(userId, payload = {}, dependencies = {}) {
       const holdingBefore = await HoldingModel.findOneAndUpdate(
         { portfolio_id: portfolio._id, symbol, shares: { $gte: shares } },
         [{ $set: { shares: { $round: [{ $subtract: ['$shares', shares] }, SHARE_DECIMALS] }, updatedAt: '$$NOW' } }],
-        writeOptions(session, { new: false, updatePipeline: true, timestamps: false })
+        writeOptions(session, { returnDocument: 'before', updatePipeline: true, timestamps: false })
       );
       if (!holdingBefore) {
         throw httpError('Not enough shares');

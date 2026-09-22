@@ -169,7 +169,7 @@ async function retryUndelivered({ sendAlertNotification }) {
           notificationLeaseUntil: new Date(Date.now() + NOTIFY_LEASE_MS),
         },
       },
-      { new: true }
+      { returnDocument: 'after' }
     );
     if (!claimed) continue;
 
@@ -260,7 +260,7 @@ async function processActiveAlerts(options = {}) {
           notificationLeaseUntil: new Date(Date.now() + NOTIFY_LEASE_MS),
         },
       },
-      { new: true }
+      { returnDocument: 'after' }
     );
     if (!claimed) continue;
 

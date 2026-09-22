@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-server-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Several test suites spin up a real MongoDB via mongodb-memory-server, which
+      # downloads a ~500MB mongod binary on first use. Caching it keeps CI fast and
+      # avoids re-downloading (and the flakiness that comes with that) on every run.
+      - name: Cache mongodb-memory-server binaries
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/mongodb-binaries
+          key: mongodb-binaries-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            mongodb-binaries-${{ runner.os }}-
+
+      # Capped below the runner's CPU count: many test files each start their own
+      # in-memory MongoDB instance, and high worker parallelism was observed locally to
+      # cause severe memory contention and slow/flaky runs (see project history).
+      - name: Run tests
+        run: npx jest --maxWorkers=2

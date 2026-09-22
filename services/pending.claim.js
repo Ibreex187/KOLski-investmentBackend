@@ -17,7 +17,7 @@ async function claimPendingTransaction({ filter, status, metadata = {} }, sessio
   return TransactionModel.findOneAndUpdate(
     { ...filter, status: 'pending' },
     { $set: set },
-    { new: true, ...sessionOption(session) }
+    { returnDocument: 'after', ...sessionOption(session) }
   );
 }
 
