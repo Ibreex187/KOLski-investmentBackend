@@ -15,6 +15,7 @@ const marketRoutes = require('./routes/market.route.js');
 const notificationRoutes = require('./routes/notification.route.js');
 const adminRoutes = require('./routes/admin.route.js');
 const cronRoutes = require('./routes/cron.route.js');
+const demoRoutes = require('./routes/demo.route.js');
 const openApiSpec = require('./docs/openapi.json');
 
 // Add both with and without 'www' for frontend CORS
@@ -154,6 +155,7 @@ app.use('/api/v1/market', marketRoutes);
 app.use('/api/v1/notifications', notificationRoutes);
 app.use('/api/v1/admin', adminRoutes);
 app.use('/api/v1/internal/cron', cronRoutes);
+app.use('/api/v1', demoRoutes);
 
 // Health check endpoint
 app.get('/health', (req, res) => {

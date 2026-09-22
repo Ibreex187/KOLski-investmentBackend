@@ -86,10 +86,19 @@ const refreshTokenLimiter = createJsonRateLimiter({
   message: 'Too many refresh attempts. Please try again later.',
 });
 
+// The demo login has no password to slow down a script, so it gets its own bound
+// against being used to mint sessions in bulk.
+const demoLoginLimiter = createJsonRateLimiter({
+  windowMs: Number(process.env.DEMO_LOGIN_RATE_LIMIT_WINDOW_MS || 15 * 60 * 1000),
+  max: Number(process.env.DEMO_LOGIN_RATE_LIMIT_MAX || 30),
+  message: 'Too many demo login attempts. Please try again later.',
+});
+
 module.exports = {
   createJsonRateLimiter,
   loginLimiter,
   verificationLimiter,
   forgotPasswordLimiter,
   refreshTokenLimiter,
+  demoLoginLimiter,
 };

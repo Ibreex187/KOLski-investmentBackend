@@ -107,6 +107,7 @@ const getMe = async (req, res) => {
         lastLogin: foundUser.lastLogin,
         role: foundUser.role,
         isVerified: foundUser.isVerified,
+        isDemo: Boolean(foundUser.isDemo),
       }
     });
   } catch (error) {

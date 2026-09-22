@@ -1,4 +1,5 @@
 const { processActiveAlerts } = require('../services/alert.service');
+const { resetDemoAccount } = require('../services/demo.service');
 const { success, error } = require('../utils/response');
 
 // GET|POST /api/v1/internal/cron/check-alerts
@@ -13,4 +14,16 @@ async function checkAlerts(req, res) {
   }
 }
 
-module.exports = { checkAlerts };
+// GET|POST /api/v1/internal/cron/reset-demo
+// Wipes and reseeds the shared public demo account. Returns ids only.
+async function resetDemo(req, res) {
+  try {
+    const result = await resetDemoAccount();
+    return success(res, result);
+  } catch (err) {
+    console.error('Demo reset failed:', err);
+    return error(res, 'Demo reset failed', 500);
+  }
+}
+
+module.exports = { checkAlerts, resetDemo };

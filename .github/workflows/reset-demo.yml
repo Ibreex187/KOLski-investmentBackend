@@ -1,0 +1,45 @@
+name: Reset demo account
+
+# Nightly reset of the shared public demo account (see services/demo.service.js), so its
+# data stays a clean, believable portfolio instead of drifting from whatever visitors
+# traded. Runs once a day here; vercel.json's daily cron is only a fallback.
+#
+# Required repository secrets (Settings -> Secrets and variables -> Actions):
+#   API_BASE_URL  same value used by check-alerts.yml
+#   CRON_SECRET   same value used by check-alerts.yml
+#
+# Note: GitHub pauses scheduled workflows after 60 days without repository activity; re-enable
+# them from the Actions tab if that happens.
+
+on:
+  schedule:
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: reset-demo
+  cancel-in-progress: false
+
+jobs:
+  reset-demo:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Call the demo reset endpoint
+        env:
+          API_BASE_URL: ${{ secrets.API_BASE_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          if [ -z "$API_BASE_URL" ] || [ -z "$CRON_SECRET" ]; then
+            echo "::error::Set the API_BASE_URL and CRON_SECRET repository secrets."
+            exit 1
+          fi
+
+          curl --silent --show-error --fail-with-body \
+            --max-time 60 --retry 2 --retry-delay 5 \
+            --request POST \
+            --header "Authorization: Bearer ${CRON_SECRET}" \
+            "${API_BASE_URL%/}/api/v1/internal/cron/reset-demo"
+          echo

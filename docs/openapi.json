@@ -166,6 +166,20 @@
         }
       }
     },
+    "/api/v1/demo/login": {
+      "post": {
+        "summary": "Log in to the shared public demo account",
+        "description": "No credentials required. Logs the caller into a single shared, seeded demo portfolio (fake data, no real money), issuing a normal token/refreshToken pair. Rate limited per IP.",
+        "responses": {
+          "200": {
+            "description": "Session created. Response includes token, refreshToken, and user (user.isDemo is true)."
+          },
+          "429": {
+            "description": "Too many demo login attempts from this client"
+          }
+        }
+      }
+    },
     "/api/v1/portfolio/dashboard": {
       "get": {
         "summary": "Get frontend-ready dashboard payload",
@@ -593,6 +607,70 @@
         "responses": {
           "200": { "description": "Transaction list" },
           "403": { "description": "Forbidden" }
+        }
+      }
+    },
+    "/api/v1/internal/cron/check-alerts": {
+      "get": {
+        "summary": "(internal) Run one price-alert check pass",
+        "description": "Internal/scheduled endpoint. Requires Authorization: Bearer <CRON_SECRET>; disabled (503) if CRON_SECRET is not configured. Not part of the public API. Checks a bounded batch of active price alerts against live quotes, triggers and notifies any that crossed their target, and retries any earlier notification that failed to deliver. Called by a scheduler roughly hourly.",
+        "responses": {
+          "200": {
+            "description": "Response includes checkedCount, triggeredCount, notifiedCount, retriedCount, failedSymbols, skippedSymbols"
+          },
+          "401": {
+            "description": "Missing/invalid bearer token"
+          },
+          "503": {
+            "description": "CRON_SECRET not configured"
+          }
+        }
+      },
+      "post": {
+        "summary": "(internal) Run one price-alert check pass",
+        "description": "Internal/scheduled endpoint. Requires Authorization: Bearer <CRON_SECRET>; disabled (503) if CRON_SECRET is not configured. Not part of the public API.",
+        "responses": {
+          "200": {
+            "description": "See GET"
+          },
+          "401": {
+            "description": "Missing/invalid bearer token"
+          },
+          "503": {
+            "description": "CRON_SECRET not configured"
+          }
+        }
+      }
+    },
+    "/api/v1/internal/cron/reset-demo": {
+      "get": {
+        "summary": "(internal) Reset the shared public demo account",
+        "description": "Internal/scheduled endpoint. Requires Authorization: Bearer <CRON_SECRET>; disabled (503) if CRON_SECRET is not configured. Not part of the public API. Wipes and reseeds the demo account's portfolio, holdings, transactions, notifications, watchlist, and alerts from a fixed script. Called by a daily scheduler.",
+        "responses": {
+          "200": {
+            "description": "Reset complete"
+          },
+          "401": {
+            "description": "Missing/invalid bearer token"
+          },
+          "503": {
+            "description": "CRON_SECRET not configured"
+          }
+        }
+      },
+      "post": {
+        "summary": "(internal) Reset the shared public demo account",
+        "description": "Internal/scheduled endpoint. Requires Authorization: Bearer <CRON_SECRET>; disabled (503) if CRON_SECRET is not configured. Not part of the public API.",
+        "responses": {
+          "200": {
+            "description": "Reset complete"
+          },
+          "401": {
+            "description": "Missing/invalid bearer token"
+          },
+          "503": {
+            "description": "CRON_SECRET not configured"
+          }
         }
       }
     },

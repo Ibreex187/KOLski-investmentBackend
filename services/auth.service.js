@@ -21,6 +21,7 @@ function sanitizeUser(user) {
     currency: user.currency,
     role: user.role,
     isVerified: user.isVerified,
+    isDemo: Boolean(user.isDemo),
   };
 }
 

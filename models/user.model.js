@@ -11,6 +11,10 @@ const UserSchema = new mongoose.Schema({
     currency: { type: String, default: 'USD' },
     role: { type: String, enum: ['user', 'admin'], default: 'user' },
     isVerified: { type: Boolean, default: false },
+    // True only for the single shared public demo account (see services/demo.service.js),
+    // so the client can show a "demo mode" banner and the backend can keep it out of
+    // admin reporting.
+    isDemo: { type: Boolean, default: false },
     emailVerificationToken: { type: String, default: null, select: false },
     emailVerificationExpires: { type: Date, default: null, select: false },
     refreshToken: { type: String, default: null, select: false },
